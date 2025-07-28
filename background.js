@@ -12,8 +12,9 @@ let localStatus = null;
 // let lastStatus = null;
 // Local timer (DateTime), 
 let nextNotify = null; 
-// Heartbeat state (setInterval handle)
+// Heartbeat state (setInterval/setTimeout handles)
 let heartbeatInterval;
+let lastHeartbeatTimeout;
 // Notification state
 // No way to know if they (x)'d the notification without button?
 // Oh... onClosed! https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/notifications
@@ -31,6 +32,7 @@ function runEvent(event) {
         localStatus='active';
         let now = new Date();
         nextNotify = new Date(+now + 1 * 60 * 1000); // 1 minute timer (for now)
+        // Below assumes 1 minute (timer) is greater than heartbeat duration (20 seconds)...
         // un-register any active notification (of either kind!)
         if (activeNotification) {
           startHeartbeat().then(() => {
@@ -49,7 +51,12 @@ function runEvent(event) {
         console.log('Resuming with assumed nextNotify: %o', nextNotify)
         chrome.action.setBadgeText({ text: 'ON' });
         localStatus='active';
-        startHeartbeat();
+        const diff = nextNotify - new Date();
+        if (diff<(20*1000)) {
+          lastHeartbeatOnly(diff)
+        } else {
+          startHeartbeat();
+        }
       }
       break;
     case 'heartbeat-complete':
@@ -70,7 +77,7 @@ function runEvent(event) {
         });
       } else if (diff<(20*1000)) {
         // Account for drift
-        lastHeartbeat(diff)
+        lastHeartbeat(diff);
       }
       // Otherwise, heartbeat will continue!
       break;
@@ -118,18 +125,21 @@ async function loadStatus(){
 
   // TODO handle lastStatus too
   loading = 
-    chrome.storage.local.get({STORE_PAUSE_LEFTOVER})
+    chrome.storage.local.get('store-pause-leftover')
     .then(result => {
       console.log('Result received: %o', result)
-      if (!result[STORE_PAUSE_LEFTOVER]) {
+      const retrieved = result['store-pause-leftover'];
+      if (!retrieved) {
         // We're asleep, resumed without a stored pause
+        console.log('Resuming as if asleep')
         localStatus = 'asleep'
         return; // Nothing stored, nothing to remove!
       } else {
+        console.log('Resuming as if paused')
         localStatus = 'paused'
         let now = new Date();
-        nextNotify = new Date(+now + result[STORE_PAUSE_LEFTOVER])
-        return chrome.storage.local.remove({STORE_PAUSE_LEFTOVER})
+        nextNotify = new Date(+now + retrieved)
+        return chrome.storage.local.remove('store-pause-leftover');
       }
     });
   await loading;
@@ -153,7 +163,7 @@ async function saveStatus() {
   // TODO: also handle lastStatus
   console.log('Storing time left: %s', nextNotify - new Date())
   loading = 
-    chrome.storage.local.set({STORE_PAUSE_LEFTOVER: nextNotify - new Date()})
+    chrome.storage.local.set({'store-pause-leftover': nextNotify - new Date()})
     .then(stopHeartbeat);
   await loading;
   loading=null;
@@ -202,12 +212,22 @@ async function startHeartbeat() {
 // Called when there are <20 seconds in timer
 async function lastHeartbeat(timeLeft) {
   clearInterval(heartbeatInterval);
-  setTimeout(runHeartbeat, timeLeft)
+  lastHeartbeatTimeout = setTimeout(runHeartbeat, timeLeft)
+}
+
+// Called when there are <20 seconds in timer started from a pause
+async function lastHeartbeatOnly(timeLeft) {
+  lastHeartbeatTimeout = setTimeout(runHeartbeat, timeLeft)
 }
 
 // Called when you pause
 async function stopHeartbeat() {
-  clearInterval(heartbeatInterval);
+  if (lastHeartbeatTimeout) {
+    clearTimeout(lastHeartbeatTimeout);
+    lastHeartbeatTimeout=null; // TODO: Is this needed?
+  } else {
+    clearInterval(heartbeatInterval);
+  }
 }
 
 // TODO remove/tweak
