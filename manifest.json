@@ -8,8 +8,7 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "Drink Water Event",
-    "default_popup": "popup.html"
+    "default_title": "Drink Water Event"
   },
   "icons": {
     "16": "drink_water16.png",

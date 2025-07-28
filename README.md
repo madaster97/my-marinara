@@ -39,3 +39,7 @@ APIs needed:
 - `onStartup` and `onSuspend` seem to be CHROME open/closing 
 
 **Design the above to persist all state when we stop timer**
+
+### POC
+- Can click the icon
+- Two types of notifications
