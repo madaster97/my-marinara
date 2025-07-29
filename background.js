@@ -9,8 +9,8 @@
 // - Time after a timer completes, but the user has not started the next
 let localStatus = null; 
 // Need to compare status to 'lastStatus' for full context
-// let lastStatus = null;
-// Local timer (DateTime), 
+let lastStatus = null; // 'active' or 'break'
+// // Local timer (DateTime), 
 let nextNotify = null; 
 // Heartbeat state (setInterval/setTimeout handles)
 let heartbeatInterval;
@@ -25,32 +25,54 @@ let activeNotification = null;
 // Events: 'heartbeat-complete','notify-active-click','notify-break-click','icon-click'
 // Every caller should use this as a *sink*
 function runEvent(event) {
+  console.log('Event details: event (%s), localStatus (%s), lastStatus (%s), nextNotify (%s)', event, localStatus, lastStatus, nextNotify)
   switch (event) {
     case 'icon-click':
       if (localStatus=='asleep') {
-        chrome.action.setBadgeText({ text: 'ON' });
-        localStatus='active';
+        // If the icon click woke up the SW, default to active
+        if (!lastStatus) {
+          localStatus='active'
+        } else {
+          localStatus = lastStatus == 'active'
+            ? 'break'
+            : 'active';
+          lastStatus=''; // Clean up
+        }
+
+        // Update badge + timer
         let now = new Date();
-        nextNotify = new Date(+now + 1 * 60 * 1000); // 1 minute timer (for now)
-        // Below assumes 1 minute (timer) is greater than heartbeat duration (20 seconds)...
+        if (localStatus=='active') {
+          chrome.action.setBadgeText({ text: 'ON' });
+          nextNotify = new Date(+now + 60 * 1000); // 1 minute timer (for now)
+        } else {
+          chrome.action.setBadgeText({ text: 'X' });
+          nextNotify = new Date(+now + 30 * 1000); // 30 second timer (for now)
+        }
+
         // un-register any active notification (of either kind!)
-        if (activeNotification) {
+        // Start the heartbeat first!
+        if (!!activeNotification) {
           startHeartbeat().then(() => {
             return chrome.notifications.clear(activeNotification);
           });
         } else {
           startHeartbeat();
         }
-      } else if (localStatus=='active') {
+      } else if (['active','break'].includes(localStatus)) {
         chrome.action.setBadgeText({ text: '-' });
-        // TODO: Bug when storing last status?
+        lastStatus=localStatus
         localStatus='paused'
         // Clears local status + stops heartbeat, to allow SW to go inactive
         saveStatus();
       } else if (localStatus=='paused') {
-        console.log('Resuming with assumed nextNotify: %o', nextNotify)
-        chrome.action.setBadgeText({ text: 'ON' });
-        localStatus='active';
+        console.log('Resuming to "%s" with assumed nextNotify: %o', lastStatus, nextNotify)
+        let text = lastStatus == 'active'
+          ? 'ON'
+          : 'X';
+        chrome.action.setBadgeText({ text });
+        localStatus=lastStatus;
+        lastStatus='';
+        // Have to check if there is <1 heartbeat of time left
         const diff = nextNotify - new Date();
         if (diff<(20*1000)) {
           lastHeartbeatOnly(diff)
@@ -60,26 +82,35 @@ function runEvent(event) {
       }
       break;
     case 'heartbeat-complete':
-      const diff = nextNotify - new Date();
-      if (diff<0) {
-        chrome.action.setBadgeText({ text: 'OFF' });
-        localStatus='asleep'
-        // TODO: use lastStatus to figure what's next
-        // Trigger notification
-        activeNotification = NOTIFY_GO_ACTIVE;
-        chrome.notifications.create(NOTIFY_GO_ACTIVE,{
-          type: 'basic',
-          iconUrl: 'stay_hydrated.png',
-          title: 'Time to Hydrate',
-          message: "Everyday I'm Guzzlin'!",
-          buttons: [{ title: 'Keep it Flowing.' }],
-          priority: 0
-        });
-      } else if (diff<(20*1000)) {
-        // Account for drift
-        lastHeartbeat(diff);
+      // Put a guard in case of heartbeat leaks
+      if (['active','break'].includes(localStatus)) {
+        const diff = nextNotify - new Date();
+        if (diff<0) {
+          chrome.action.setBadgeText({ text: 'OFF' });
+          lastStatus=localStatus
+          localStatus='asleep'
+          // Trigger notification
+          // If we were active, show break notification (and vice versa)
+          activeNotification = lastStatus == 'active'
+            ? NOTIFY_GO_BREAK
+            : NOTIFY_GO_ACTIVE;
+          // TODO: Make different messages for active vs break
+          chrome.notifications.create(activeNotification,{
+            type: 'basic',
+            iconUrl: 'stay_hydrated.png',
+            title: 'Time to Hydrate',
+            message: "Notification type: " + activeNotification,
+            buttons: [{ title: 'Keep it Flowing.' }],
+            priority: 0
+          });
+        } else if (diff<(20*1000)) {
+          // Account for drift
+          lastHeartbeat(diff);
+        }
+        // Otherwise, heartbeat will continue!
+      } else {
+        console.warn('Heartbeat fired while in "%s" status', localStatus)
       }
-      // Otherwise, heartbeat will continue!
       break;
     case 'notify-active-click':
       // Only respond on asleep
@@ -89,8 +120,23 @@ function runEvent(event) {
       if (localStatus=='asleep') {
         chrome.action.setBadgeText({ text: 'ON' });
         localStatus='active';
+        lastStatus='';
         let now = new Date();
         nextNotify = new Date(+now + 1 * 60 * 1000); // 1 minute timer (for now)
+        startHeartbeat();
+      }
+      break;
+    case 'notify-break-click':
+      // Only respond on asleep
+      // Assume the click removes the notification. Cleanup state
+      // TODO: Only clear based on type of active notification
+      activeNotification = null;
+      if (localStatus=='asleep') {
+        chrome.action.setBadgeText({ text: 'X' });
+        localStatus='break';
+        lastStatus='';
+        let now = new Date();
+        nextNotify = new Date(+now + 1 * 30 * 1000); // 30 second timer (for now)
         startHeartbeat();
       }
       break;
@@ -101,14 +147,11 @@ function runEvent(event) {
   }
 }
 
-// Constants for Stored State - Only to handle inactivity
-// Will assume pause stops ticking, so SW likely to go inactive
-const STORE_PAUSE_LEFTOVER = 'store-pause-leftover'; // milliseconds left on timer
-// const STORE_PAUSE_LAST_STATUS = 'store-pause-last-status'; // the last status before pause
+/** The unique actions that can happen */
 
 // Constants for Notification IDs
 const NOTIFY_GO_ACTIVE = 'start-active';
-// const NOTIFY_GO_BREAK = 'start-break';
+const NOTIFY_GO_BREAK = 'start-break';
 
 // Handle case where 1 click starts to load the stored status, but another click comes in
 // Global promise for "I'm loading the status into localStatus"
@@ -125,21 +168,23 @@ async function loadStatus(){
 
   // TODO handle lastStatus too
   loading = 
-    chrome.storage.local.get('store-pause-leftover')
+    chrome.storage.local.get(['store-pause-leftover','store-pause-status'])
     .then(result => {
       console.log('Result received: %o', result)
-      const retrieved = result['store-pause-leftover'];
-      if (!retrieved) {
+      const leftover = result['store-pause-leftover'];
+      if (!leftover) {
         // We're asleep, resumed without a stored pause
         console.log('Resuming as if asleep')
         localStatus = 'asleep'
+        // Don't set lastStatus, that defaulting should only run for icon-click event
         return; // Nothing stored, nothing to remove!
       } else {
         console.log('Resuming as if paused')
         localStatus = 'paused'
+        lastStatus = result['store-pause-status'];
         let now = new Date();
-        nextNotify = new Date(+now + retrieved)
-        return chrome.storage.local.remove('store-pause-leftover');
+        nextNotify = new Date(+now + leftover)
+        return chrome.storage.local.remove(['store-pause-leftover','store-pause-status']);
       }
     });
   await loading;
@@ -148,6 +193,7 @@ async function loadStatus(){
 
 // Save the status, stop the heartbeat, clear localStatus
 // Re-use same promise for saving status on pause
+// Save while paused, assuming SW will go inactive
 async function saveStatus() {
   if (!localStatus) {
     // No status to save?
@@ -160,14 +206,17 @@ async function saveStatus() {
     return;
   }
   // Save the thing + clear local status
-  // TODO: also handle lastStatus
-  console.log('Storing time left: %s', nextNotify - new Date())
+  console.log('Storing time left before "%s" is over: %s', lastStatus, nextNotify - new Date())
   loading = 
-    chrome.storage.local.set({'store-pause-leftover': nextNotify - new Date()})
+    chrome.storage.local.set({
+      'store-pause-leftover': nextNotify - new Date(),
+      'store-pause-status': lastStatus
+    })
     .then(stopHeartbeat);
   await loading;
   loading=null;
-  localStatus = null;
+  localStatus=null;
+  lastStatus=null;
 }
 
 //** Operations that could be on startup */
@@ -175,14 +224,15 @@ async function saveStatus() {
 // Handle someone clicking the button in a notification
 // Check stored status because this could be on startup
 chrome.notifications.onButtonClicked.addListener(async (notificationId) => {
+  console.log('Notification button clicked: %s', notificationId)
   await loadStatus();
   switch (notificationId) {
     case NOTIFY_GO_ACTIVE:
       runEvent('notify-active-click')
       break;
-    // case NOTIFY_GO_BREAK:
-    //   runEvent('notify-break-click')
-    //   break;
+    case NOTIFY_GO_BREAK:
+      runEvent('notify-break-click')
+      break;
     default:
       console.warn('Unknown notification sent: %s', notificationId)
       break;
@@ -199,24 +249,31 @@ chrome.action.onClicked.addListener(async () => {
 //** Operations only registered after startup */
 // https://developer.chrome.com/docs/extensions/develop/migrate/to-service-workers#keep_a_service_worker_alive_continuously
 async function runHeartbeat() {
-  console.log('Heartbeat started')
   await chrome.storage.local.set({ 'last-heartbeat': new Date().getTime() });
-  console.log('Heartbeat completed')
+  console.log('Heartbeat ran')
+  // This requirement was painful to find... 
+  // Completing a timeout doesn't clear this reference, need to clear yourself
+  if (lastHeartbeatTimeout) {
+    lastHeartbeatTimeout=null;
+  }
   runEvent('heartbeat-complete')
 }
 
 async function startHeartbeat() {
+  console.log('Heartbeat started during "%s" status, due at %s',localStatus,nextNotify)
   heartbeatInterval = setInterval(runHeartbeat, 20 * 1000); // Default to 20 seconds
 }
 
 // Called when there are <20 seconds in timer
 async function lastHeartbeat(timeLeft) {
+  console.log('Final heartbeat started')
   clearInterval(heartbeatInterval);
   lastHeartbeatTimeout = setTimeout(runHeartbeat, timeLeft)
 }
 
 // Called when there are <20 seconds in timer started from a pause
 async function lastHeartbeatOnly(timeLeft) {
+  console.log('Final heartbeat (only) started')
   lastHeartbeatTimeout = setTimeout(runHeartbeat, timeLeft)
 }
 
@@ -224,27 +281,10 @@ async function lastHeartbeatOnly(timeLeft) {
 async function stopHeartbeat() {
   if (lastHeartbeatTimeout) {
     clearTimeout(lastHeartbeatTimeout);
-    lastHeartbeatTimeout=null; // TODO: Is this needed?
+    console.log('Final heartbeat stopped')
+    // lastHeartbeatTimeout=null; // TODO: Is this needed? Note we clear after last run too
   } else {
+    console.log('Heartbeat stopped')
     clearInterval(heartbeatInterval);
   }
 }
-
-// TODO remove/tweak
-// chrome.alarms.onAlarm.addListener(() => {
-//   chrome.action.setBadgeText({ text: '' });
-//   chrome.notifications.create({
-//     type: 'basic',
-//     iconUrl: 'stay_hydrated.png',
-//     title: 'Time to Hydrate',
-//     message: "Everyday I'm Guzzlin'!",
-//     buttons: [{ title: 'Keep it Flowing.' }],
-//     priority: 0
-//   });
-// });
-
-// chrome.notifications.onButtonClicked.addListener(async () => {
-//   const item = await chrome.storage.sync.get(['minutes']);
-//   chrome.action.setBadgeText({ text: 'ON' });
-//   chrome.alarms.create({ delayInMinutes: item.minutes });
-// });
