@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 'use strict';
 
+// TODO: long-break and cycle
 // In-Memory Status: 'asleep','paused','active','break'
 // 'asleep' will cover 2 things:
 // - Startup
@@ -15,10 +16,11 @@ let nextNotify = null;
 // Heartbeat state (setInterval/setTimeout handles)
 let heartbeatInterval;
 let lastHeartbeatTimeout;
-// Notification state
-// No way to know if they (x)'d the notification without button?
-// Oh... onClosed! https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/notifications
+// Notification state (which of 'active' or 'break' is in use)
+// Will only care about clicking buttons, not closing the notification
 let activeNotification = null;
+
+// TODO: 
 
 // The main event logic
 // States: 'asleep','paused','active','break'
@@ -40,6 +42,7 @@ function runEvent(event) {
         }
 
         // Update badge + timer
+        // TODO: Add specific colors, change text to # of minutes
         let now = new Date();
         if (localStatus=='active') {
           chrome.action.setBadgeText({ text: 'ON' });
@@ -95,6 +98,7 @@ function runEvent(event) {
             ? NOTIFY_GO_BREAK
             : NOTIFY_GO_ACTIVE;
           // TODO: Make different messages for active vs break
+          // TODO: Add further messages for completed cycle (long break)
           chrome.notifications.create(activeNotification,{
             type: 'basic',
             iconUrl: 'stay_hydrated.png',
@@ -103,11 +107,15 @@ function runEvent(event) {
             buttons: [{ title: 'Keep it Flowing.' }],
             priority: 0
           });
+          // TODO: Open browser tab with info
+          // TODO: store today's pomodoro history
         } else if (diff<(20*1000)) {
-          // Account for drift
+          // Account for drift + cases where timer isn't cleanly divisible by heartbeat
+          // (Example: 20 second heartbeat, 30 second timer, last run is 10 seconds - any drift)
           lastHeartbeat(diff);
         }
         // Otherwise, heartbeat will continue!
+        // TODO: Update badge with # of minutes
       } else {
         console.warn('Heartbeat fired while in "%s" status', localStatus)
       }
@@ -115,7 +123,6 @@ function runEvent(event) {
     case 'notify-active-click':
       // Only respond on asleep
       // Assume the click removes the notification. Cleanup state
-      // TODO: Only clear based on type of active notification
       activeNotification = null;
       if (localStatus=='asleep') {
         chrome.action.setBadgeText({ text: 'ON' });
@@ -129,7 +136,6 @@ function runEvent(event) {
     case 'notify-break-click':
       // Only respond on asleep
       // Assume the click removes the notification. Cleanup state
-      // TODO: Only clear based on type of active notification
       activeNotification = null;
       if (localStatus=='asleep') {
         chrome.action.setBadgeText({ text: 'X' });
@@ -147,14 +153,14 @@ function runEvent(event) {
   }
 }
 
-/** The unique actions that can happen */
-
 // Constants for Notification IDs
 const NOTIFY_GO_ACTIVE = 'start-active';
 const NOTIFY_GO_BREAK = 'start-break';
 
 // Handle case where 1 click starts to load the stored status, but another click comes in
 // Global promise for "I'm loading the status into localStatus"
+// TODO: Make this load any user-settings
+// TODO: Make sure restarting from contextMenu loads settings
 let loading;
 async function loadStatus(){
   if (!!localStatus) {
@@ -166,7 +172,7 @@ async function loadStatus(){
     return;
   }
 
-  // TODO handle lastStatus too
+  // TODO: Load today's pomodoro history
   loading = 
     chrome.storage.local.get(['store-pause-leftover','store-pause-status'])
     .then(result => {
@@ -205,6 +211,7 @@ async function saveStatus() {
     await loading;
     return;
   }
+  // TODO: Save today's running pomodoro history (# + date)
   // Save the thing + clear local status
   console.log('Storing time left before "%s" is over: %s', lastStatus, nextNotify - new Date())
   loading = 
@@ -245,6 +252,9 @@ chrome.action.onClicked.addListener(async () => {
   await loadStatus();
   runEvent('icon-click')
 });
+
+// Handle contextMenu options
+// Options: 
 
 //** Operations only registered after startup */
 // https://developer.chrome.com/docs/extensions/develop/migrate/to-service-workers#keep_a_service_worker_alive_continuously
@@ -288,3 +298,5 @@ async function stopHeartbeat() {
     clearInterval(heartbeatInterval);
   }
 }
+
+// TODO: On startup, archive any pomodoro history from prior days (# + date)
