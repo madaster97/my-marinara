@@ -43,3 +43,8 @@ APIs needed:
 ### POC
 - Can click the icon
 - Two types of notifications
+
+### Long-Break
+- [X] Simplify back to 1 notification ID, always clear on icon-click
+- [] Remove the 'long-break' state, just make completedToday reflect 'break' status
+- [] Change completedToday > cycleCount

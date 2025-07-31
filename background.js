@@ -16,9 +16,6 @@ let nextNotify = null;
 // Heartbeat state (setInterval/setTimeout handles)
 let heartbeatInterval;
 let lastHeartbeatTimeout;
-// Notification state (which of 'active' or 'break' is in use)
-// Will only care about clicking buttons, not closing the notification
-let activeNotification = null;
 // Pomodoro Cycles
 let completedToday = 0;
 
@@ -52,15 +49,11 @@ function runEvent(event) {
           nextNotify = new Date(+now + 30 * 1000); // 30 second timer (for now)
         }
 
-        // un-register any active notification (of either kind!)
+        // clear the notification
         // Start the heartbeat first!
-        if (!!activeNotification) {
-          startHeartbeat().then(() => {
-            return chrome.notifications.clear(activeNotification);
-          });
-        } else {
-          startHeartbeat();
-        }
+        startHeartbeat().then(() => {
+          return chrome.notifications.clear('my-notification');
+        });
       } else if (['active','break'].includes(localStatus)) {
         chrome.action.setBadgeText({ text: '-' });
         lastStatus=localStatus
@@ -99,16 +92,18 @@ function runEvent(event) {
           }
           // Trigger notification
           // If we were active, show break notification (and vice versa)
-          activeNotification = lastStatus == 'active'
-            ? NOTIFY_GO_BREAK
-            : NOTIFY_GO_ACTIVE;
           // TODO: Make different messages for active vs break
           // TODO: Add further messages for completed cycle (long break)
-          chrome.notifications.create(activeNotification,{
+          let notifyText =
+            lastStatus == 'active'
+              ? 'break' // TODO - long-break message
+              : 'active';
+          chrome.notifications.create('my-notification',{
             type: 'basic',
             iconUrl: 'stay_hydrated.png',
             title: 'Time to Hydrate',
-            message: "Notification type: " + activeNotification,
+            message: 
+              "Notification type: " + notifyText,
             buttons: [{ title: 'Keep it Flowing.' }],
             priority: 0
           });
@@ -125,42 +120,35 @@ function runEvent(event) {
         console.warn('Heartbeat fired while in "%s" status', localStatus)
       }
       break;
-    case 'notify-active-click':
+    case 'notify-click':
       // Only respond on asleep
-      // Assume the click removes the notification. Cleanup state
-      activeNotification = null;
+      // Assume the click removes the notification, nothing to clear
       if (localStatus=='asleep') {
-        chrome.action.setBadgeText({ text: 'ON' });
-        localStatus='active';
-        lastStatus='';
+        localStatus = lastStatus == 'active'
+          ? 'break'
+          : 'active';
+        lastStatus=''; // Clean up
+
+        // Update badge + timer
+        // TODO: Add specific colors, change text to # of minutes
         let now = new Date();
-        nextNotify = new Date(+now + 1 * 60 * 1000); // 1 minute timer (for now)
+        if (localStatus=='active') {
+          chrome.action.setBadgeText({ text: 'ON' });
+          nextNotify = new Date(+now + 60 * 1000); // 1 minute timer (for now)
+        } else {
+          chrome.action.setBadgeText({ text: 'X' });
+          nextNotify = new Date(+now + 30 * 1000); // 30 second timer (for now)
+        }
+
         startHeartbeat();
       }
       break;
-    case 'notify-break-click':
-      // Only respond on asleep
-      // Assume the click removes the notification. Cleanup state
-      activeNotification = null;
-      if (localStatus=='asleep') {
-        chrome.action.setBadgeText({ text: 'X' });
-        localStatus='break';
-        lastStatus='';
-        let now = new Date();
-        nextNotify = new Date(+now + 1 * 30 * 1000); // 30 second timer (for now)
-        startHeartbeat();
-      }
-      break;
-  
     default:
       console.warn('Received unrecognized event: %s', event);
       break;
   }
 }
 
-// Constants for Notification IDs
-const NOTIFY_GO_ACTIVE = 'start-active';
-const NOTIFY_GO_BREAK = 'start-break';
 
 // Handle case where 1 click starts to load the stored status, but another click comes in
 // Global promise for "I'm loading the status into localStatus"
@@ -249,11 +237,8 @@ chrome.notifications.onButtonClicked.addListener(async (notificationId) => {
   console.log('Notification button clicked: %s', notificationId)
   await loadStatus();
   switch (notificationId) {
-    case NOTIFY_GO_ACTIVE:
-      runEvent('notify-active-click')
-      break;
-    case NOTIFY_GO_BREAK:
-      runEvent('notify-break-click')
+    case 'my-notification':
+      runEvent('notify-click')
       break;
     default:
       console.warn('Unknown notification sent: %s', notificationId)
