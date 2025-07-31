@@ -16,8 +16,13 @@ let nextNotify = null;
 // Heartbeat state (setInterval/setTimeout handles)
 let heartbeatInterval;
 let lastHeartbeatTimeout;
-// Pomodoro Cycles
-let completedToday = 0;
+// Current Pomodoro Cycles
+let currentCycle = 0;
+// TODO: Load from settings
+let cyclePeriod = 2;
+let activeTime = 60;
+let breakTime = 30;
+let longBreakTime = 39;
 
 // The main event logic
 // States: 'asleep','paused','active','break'
@@ -43,10 +48,13 @@ function runEvent(event) {
         let now = new Date();
         if (localStatus=='active') {
           chrome.action.setBadgeText({ text: 'ON' });
-          nextNotify = new Date(+now + 60 * 1000); // 1 minute timer (for now)
+          nextNotify = new Date(+now + activeTime * 1000); // 1 minute timer (for now)
+        } else if (currentCycle == cyclePeriod) {
+          chrome.action.setBadgeText({ text: 'Y' });
+          nextNotify = new Date(+now + longBreakTime * 1000); // 39 second timer (for now)
         } else {
           chrome.action.setBadgeText({ text: 'X' });
-          nextNotify = new Date(+now + 30 * 1000); // 30 second timer (for now)
+          nextNotify = new Date(+now + breakTime * 1000); // 30 second timer (for now)
         }
 
         // clear the notification
@@ -64,7 +72,9 @@ function runEvent(event) {
         console.log('Resuming to "%s" with assumed nextNotify: %o', lastStatus, nextNotify)
         let text = lastStatus == 'active'
           ? 'ON'
-          : 'X';
+          : currentCycle == cyclePeriod
+            ? 'Y'
+            : 'X';
         chrome.action.setBadgeText({ text });
         localStatus=lastStatus;
         lastStatus='';
@@ -87,17 +97,15 @@ function runEvent(event) {
           localStatus = 'asleep'
           // Increment Pomodoro cycle
           if (lastStatus == 'active') {
-          // Increment Pomodoro Cycle
-          completedToday++;
+            currentCycle++;
           }
           // Trigger notification
           // If we were active, show break notification (and vice versa)
-          // TODO: Make different messages for active vs break
-          // TODO: Add further messages for completed cycle (long break)
-          let notifyText =
-            lastStatus == 'active'
-              ? 'break' // TODO - long-break message
-              : 'active';
+          let notifyText = lastStatus == 'active'
+            ? currentCycle == cyclePeriod
+              ? 'long break'
+              : 'break'
+            : 'active';
           chrome.notifications.create('my-notification',{
             type: 'basic',
             iconUrl: 'stay_hydrated.png',
@@ -111,7 +119,7 @@ function runEvent(event) {
           // TODO: store today's pomodoro history
         } else if (diff<(20*1000)) {
           // Account for drift + cases where timer isn't cleanly divisible by heartbeat
-          // (Example: 20 second heartbeat, 30 second timer, last run is 10 seconds - any drift)
+          // (Example: 20 second heartbeat, 39 timer, last run is 10 seconds - any drift)
           lastHeartbeat(diff);
         }
         // Otherwise, heartbeat will continue!
@@ -134,10 +142,13 @@ function runEvent(event) {
         let now = new Date();
         if (localStatus=='active') {
           chrome.action.setBadgeText({ text: 'ON' });
-          nextNotify = new Date(+now + 60 * 1000); // 1 minute timer (for now)
+          nextNotify = new Date(+now + activeTime * 1000); // 1 minute timer (for now)
+        } else if (currentCycle == cyclePeriod) {
+          chrome.action.setBadgeText({ text: 'Y' });
+          nextNotify = new Date(+now + longBreakTime * 1000); // 39 second timer (for now)
         } else {
           chrome.action.setBadgeText({ text: 'X' });
-          nextNotify = new Date(+now + 30 * 1000); // 30 second timer (for now)
+          nextNotify = new Date(+now + breakTime * 1000); // 39 second timer (for now)
         }
 
         startHeartbeat();
@@ -148,7 +159,6 @@ function runEvent(event) {
       break;
   }
 }
-
 
 // Handle case where 1 click starts to load the stored status, but another click comes in
 // Global promise for "I'm loading the status into localStatus"
@@ -169,7 +179,7 @@ async function loadStatus(){
   let cycleSetup = chrome.storage.local.get(['store-pause-completed', 'last-heartbeat'])
     .then((result) => {
       // TODO use last-heartbeat to roll over a new day
-      completedToday = result['store-pause-completed'] || 0;
+      currentCycle = result['store-pause-completed'] || 0;
       return chrome.storage.local.remove(['store-pause-completed']);
     });
 
@@ -214,19 +224,19 @@ async function saveStatus() {
   // TODON'T: No need to store Pomodoro History here
   // Just make sure the history page can read today's count
   // Save the stuff + clear local status
-  console.log('Storing time left before "%s" is over: %s (completed %s today)', lastStatus, nextNotify - new Date(), completedToday)
+  console.log('Storing time left before "%s" is over: %s (completed %s today)', lastStatus, nextNotify - new Date(), currentCycle)
   loading = 
     chrome.storage.local.set({
       'store-pause-leftover': nextNotify - new Date(),
       'store-pause-status': lastStatus,
-      'store-pause-completed': completedToday
+      'store-pause-completed': currentCycle
     })
     .then(stopHeartbeat);
   await loading;
   loading = null;
   localStatus = null;
   lastStatus = null;
-  completedToday = null;
+  currentCycle = null;
 }
 
 //** Operations that could be on startup */

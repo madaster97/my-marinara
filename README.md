@@ -46,5 +46,5 @@ APIs needed:
 
 ### Long-Break
 - [X] Simplify back to 1 notification ID, always clear on icon-click
-- [] Remove the 'long-break' state, just make completedToday reflect 'break' status
-- [] Change completedToday > cycleCount
+- [X] Remove the 'long-break' state, just make completedToday reflect 'break' status
+- [X] Change completedToday > cycleCount
