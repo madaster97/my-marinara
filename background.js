@@ -19,8 +19,8 @@ let lastHeartbeatTimeout;
 // Notification state (which of 'active' or 'break' is in use)
 // Will only care about clicking buttons, not closing the notification
 let activeNotification = null;
-
-// TODO: 
+// Pomodoro Cycles
+let completedToday = 0;
 
 // The main event logic
 // States: 'asleep','paused','active','break'
@@ -90,8 +90,13 @@ function runEvent(event) {
         const diff = nextNotify - new Date();
         if (diff<0) {
           chrome.action.setBadgeText({ text: 'OFF' });
-          lastStatus=localStatus
-          localStatus='asleep'
+          lastStatus = localStatus
+          localStatus = 'asleep'
+          // Increment Pomodoro cycle
+          if (lastStatus == 'active') {
+          // Increment Pomodoro Cycle
+          completedToday++;
+          }
           // Trigger notification
           // If we were active, show break notification (and vice versa)
           activeNotification = lastStatus == 'active'
@@ -172,9 +177,16 @@ async function loadStatus(){
     return;
   }
 
-  // TODO: Load today's pomodoro history
-  loading = 
-    chrome.storage.local.get(['store-pause-leftover','store-pause-status'])
+  // Load Pomodoro Cycle state and save history if we've rolled to a new day
+  let cycleSetup = chrome.storage.local.get(['store-pause-completed', 'last-heartbeat'])
+    .then((result) => {
+      // TODO use last-heartbeat to roll over a new day
+      completedToday = result['store-pause-completed'] || 0;
+      return chrome.storage.local.remove(['store-pause-completed']);
+    });
+
+  loading = cycleSetup.then(() =>
+    chrome.storage.local.get(['store-pause-leftover', 'store-pause-status'])
     .then(result => {
       console.log('Result received: %o', result)
       const leftover = result['store-pause-leftover'];
@@ -190,14 +202,14 @@ async function loadStatus(){
         lastStatus = result['store-pause-status'];
         let now = new Date();
         nextNotify = new Date(+now + leftover)
-        return chrome.storage.local.remove(['store-pause-leftover','store-pause-status']);
+          return chrome.storage.local.remove(['store-pause-leftover', 'store-pause-status']);
       }
-    });
+      }));
   await loading;
   loading = null;
 }
 
-// Save the status, stop the heartbeat, clear localStatus
+// Clears local status, stops heartbeat, store cycle, to allow SW to go inactive
 // Re-use same promise for saving status on pause
 // Save while paused, assuming SW will go inactive
 async function saveStatus() {
@@ -211,19 +223,22 @@ async function saveStatus() {
     await loading;
     return;
   }
-  // TODO: Save today's running pomodoro history (# + date)
-  // Save the thing + clear local status
-  console.log('Storing time left before "%s" is over: %s', lastStatus, nextNotify - new Date())
+  // TODON'T: No need to store Pomodoro History here
+  // Just make sure the history page can read today's count
+  // Save the stuff + clear local status
+  console.log('Storing time left before "%s" is over: %s (completed %s today)', lastStatus, nextNotify - new Date(), completedToday)
   loading = 
     chrome.storage.local.set({
       'store-pause-leftover': nextNotify - new Date(),
-      'store-pause-status': lastStatus
+      'store-pause-status': lastStatus,
+      'store-pause-completed': completedToday
     })
     .then(stopHeartbeat);
   await loading;
-  loading=null;
-  localStatus=null;
-  lastStatus=null;
+  loading = null;
+  localStatus = null;
+  lastStatus = null;
+  completedToday = null;
 }
 
 //** Operations that could be on startup */
