@@ -35,6 +35,33 @@ function isLongBreak() {
   return !!cyclePeriod && currentCycle >= cyclePeriod;
 }
 
+function getBadgeTextFromSeconds(seconds) {
+  if (seconds <= 60) {
+    return "<1"
+  } else {
+    return (Math.ceil(seconds/60)).toString()
+  }
+}
+
+function changeBadgeStatus() {
+  // Update badge + timer
+  // Add specific colors, change text to # of minutes
+  let now = new Date();
+  if (localStatus=='active') {
+    chrome.action.setBadgeText({ text: getBadgeTextFromSeconds(activeTime) });
+    nextNotify = new Date(+now + activeTime * 1000);
+  } else if (isLongBreak()) {
+    chrome.action.setBadgeText({ text: getBadgeTextFromSeconds(longBreakTime) });
+    nextNotify = new Date(+now + longBreakTime * 1000);
+  } else {
+    chrome.action.setBadgeText({ text: getBadgeTextFromSeconds(breakTime) });
+    nextNotify = new Date(+now + breakTime * 1000);
+  }
+
+  let color = localStatus == 'active' ? '#bb0000' : '#11aa11';
+  chrome.action.setBadgeBackgroundColor({ color });
+}
+
 // The main event logic
 // States: 'asleep','paused','active','break'
 // Events: 'heartbeat-complete','notify-active-click','notify-break-click','icon-click'
@@ -53,20 +80,8 @@ function runEvent(event) {
             : 'active';
           lastStatus=''; // Clean up
         }
-
-        // Update badge + timer
-        // TODO: Add specific colors, change text to # of minutes
-        let now = new Date();
-        if (localStatus=='active') {
-          chrome.action.setBadgeText({ text: 'ON' });
-          nextNotify = new Date(+now + activeTime * 1000); // 1 minute timer (for now)
-        } else if (isLongBreak()) {
-          chrome.action.setBadgeText({ text: 'Y' });
-          nextNotify = new Date(+now + longBreakTime * 1000); // 39 second timer (for now)
-        } else {
-          chrome.action.setBadgeText({ text: 'X' });
-          nextNotify = new Date(+now + breakTime * 1000); // 30 second timer (for now)
-        }
+        // Update badge + start timer
+        changeBadgeStatus();
 
         // clear the notification
         // Start the heartbeat first!
@@ -81,16 +96,12 @@ function runEvent(event) {
         saveStatus();
       } else if (localStatus=='paused') {
         console.log('Resuming to "%s" with assumed nextNotify: %o', lastStatus, nextNotify)
-        let text = lastStatus == 'active'
-          ? 'ON'
-          : isLongBreak()
-            ? 'Y'
-            : 'X';
-        chrome.action.setBadgeText({ text });
-        localStatus=lastStatus;
-        lastStatus='';
         // Have to check if there is <1 heartbeat of time left
         const diff = nextNotify - new Date();
+        localStatus=lastStatus;
+        lastStatus='';
+
+        chrome.action.setBadgeText({ text: getBadgeTextFromSeconds(diff / 1000)});
         if (diff<(20*1000)) {
           lastHeartbeatOnly(diff)
         } else {
@@ -103,7 +114,7 @@ function runEvent(event) {
       if (['active','break'].includes(localStatus)) {
         const diff = nextNotify - new Date();
         if (diff<0) {
-          chrome.action.setBadgeText({ text: 'OFF' });
+          chrome.action.setBadgeText({ text: '' });
           lastStatus = localStatus
           localStatus = 'asleep'
           // Increment Pomodoro cycle
@@ -130,11 +141,13 @@ function runEvent(event) {
           // TODO: store today's pomodoro history
         } else if (diff<(20*1000)) {
           // Account for drift + cases where timer isn't cleanly divisible by heartbeat
-          // (Example: 20 second heartbeat, 39 timer, last run is 10 seconds - any drift)
+          // (Example: 20 second heartbeat, 30 second timer, last run is 10 seconds - any drift)
           lastHeartbeat(diff);
+        } else {
+          // Otherwise, heartbeat will continue!
+          // Update badge with # of minutes
+          chrome.action.setBadgeText({ text: getBadgeTextFromSeconds(diff / 1000)});
         }
-        // Otherwise, heartbeat will continue!
-        // TODO: Update badge with # of minutes
       } else {
         console.warn('Heartbeat fired while in "%s" status', localStatus)
       }
@@ -148,19 +161,8 @@ function runEvent(event) {
           : 'active';
         lastStatus=''; // Clean up
 
-        // Update badge + timer
-        // TODO: Add specific colors, change text to # of minutes
-        let now = new Date();
-        if (localStatus=='active') {
-          chrome.action.setBadgeText({ text: 'ON' });
-          nextNotify = new Date(+now + activeTime * 1000); // 1 minute timer (for now)
-        } else if (isLongBreak()) {
-          chrome.action.setBadgeText({ text: 'Y' });
-          nextNotify = new Date(+now + longBreakTime * 1000); // 39 second timer (for now)
-        } else {
-          chrome.action.setBadgeText({ text: 'X' });
-          nextNotify = new Date(+now + breakTime * 1000); // 39 second timer (for now)
-        }
+        // Update badge status
+        changeBadgeStatus();
 
         startHeartbeat();
       }
@@ -177,11 +179,11 @@ function getDefault(setting) {
     case 'cyclePeriod':
       return 4;
     case 'activeTime':
-      return 25 * 1000;
+      return 25 * 60;
     case 'breakTime':
-      return 5 * 1000;
+      return 5 * 60;
     case 'longBreakTime':
-      return 15 * 1000;
+      return 15 * 60;
 
     default:
       break;
