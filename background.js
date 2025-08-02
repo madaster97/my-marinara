@@ -171,16 +171,17 @@ function runEvent(event) {
   }
 }
 
+// Settings for debugging: `await chrome.storage.sync.set({'cyclePeriod': 2, 'activeTime': 60, 'breakTime': 30, 'longBreakTime': 39})`
 function getDefault(setting) {
   switch (setting) {
     case 'cyclePeriod':
-      return 2;
+      return 4;
     case 'activeTime':
-      return 60;
+      return 25 * 1000;
     case 'breakTime':
-      return 30;
+      return 5 * 1000;
     case 'longBreakTime':
-      return 39;
+      return 15 * 1000;
 
     default:
       break;
