@@ -21,30 +21,32 @@
 - Browser goes to sleep (so inactive SW), but you want timer to continue
 - Drift over time with 20 second ping?
 
-### Inactivity
-Example:
-- Timer is running, a couple pings go by
-- Extension is about to go inactive
-- Just give up and see what happens! **Count as a pause**
-
-## OKAY!
-APIs needed:
-- Ping loop for active timer
-- Storing state to handle resumptions (like click from pause, could be inactive)
-- Create/Remove notification
-- 
-
 ### Constraints
 - (Good?) Having a listener keeps stuff open
 - `onStartup` and `onSuspend` seem to be CHROME open/closing 
 
 **Design the above to persist all state when we stop timer**
 
-### POC
-- Can click the icon
-- Two types of notifications
+### Settings Page
+Chrome example showing storage sync with an [event](https://developer.chrome.com/docs/extensions/reference/api/storage):
+```js
+chrome.storage.onChanged.addListener((changes, namespace) => {
+  for (let [key, { oldValue, newValue }] of Object.entries(changes)) {
+    console.log(
+      `Storage key "${key}" in namespace "${namespace}" changed.`,
+      `Old value was "${oldValue}", new value is "${newValue}".`
+    );
+  }
+});
+```
 
-### Long-Break
-- [X] Simplify back to 1 notification ID, always clear on icon-click
-- [X] Remove the 'long-break' state, just make completedToday reflect 'break' status
-- [X] Change completedToday > cycleCount
+Need an options item for this
+
+#### Options Menu
+... Started thinking through: just need to hook through?
+- Open Settings Page
+- Restart Timer (from active/break, just set nextNotify + update badge text)
+- Pause (treat as icon-click)
+- Restart Cycle ()
+
+### Popup Tab on completion

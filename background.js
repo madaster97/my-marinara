@@ -3,7 +3,6 @@
 // found in the LICENSE file.
 'use strict';
 
-// TODO: long-break and cycle
 // In-Memory Status: 'asleep','paused','active','break'
 // 'asleep' will cover 2 things:
 // - Startup
@@ -18,11 +17,23 @@ let heartbeatInterval;
 let lastHeartbeatTimeout;
 // Current Pomodoro Cycles
 let currentCycle = 0;
-// TODO: Load from settings
-let cyclePeriod = 2;
-let activeTime = 60;
-let breakTime = 30;
-let longBreakTime = 39;
+// User settings, loaded later
+const SETTINGS_KEYS =['cyclePeriod','activeTime','breakTime','longBreakTime'];
+let cyclePeriod = null;
+let activeTime = null;
+let breakTime = null;
+let longBreakTime = null;
+
+function isLongBreak() {
+  // User must have long breaks enabled (cyclePeriod chosen)
+  // Then if their current cycle == the period, done!
+  // Greater than check handles changing your settings. This example scenario:
+  // 1. Period = 4, you've completed 2
+  // 2. While your 3rd cycle is running, you bump the setting down to 2
+  // 3. onChanged handler updates the variable
+  // 4. Your 3rd cycle completes, now we should long-break
+  return !!cyclePeriod && currentCycle >= cyclePeriod;
+}
 
 // The main event logic
 // States: 'asleep','paused','active','break'
@@ -49,7 +60,7 @@ function runEvent(event) {
         if (localStatus=='active') {
           chrome.action.setBadgeText({ text: 'ON' });
           nextNotify = new Date(+now + activeTime * 1000); // 1 minute timer (for now)
-        } else if (currentCycle == cyclePeriod) {
+        } else if (isLongBreak()) {
           chrome.action.setBadgeText({ text: 'Y' });
           nextNotify = new Date(+now + longBreakTime * 1000); // 39 second timer (for now)
         } else {
@@ -72,7 +83,7 @@ function runEvent(event) {
         console.log('Resuming to "%s" with assumed nextNotify: %o', lastStatus, nextNotify)
         let text = lastStatus == 'active'
           ? 'ON'
-          : currentCycle == cyclePeriod
+          : isLongBreak()
             ? 'Y'
             : 'X';
         chrome.action.setBadgeText({ text });
@@ -102,7 +113,7 @@ function runEvent(event) {
           // Trigger notification
           // If we were active, show break notification (and vice versa)
           let notifyText = lastStatus == 'active'
-            ? currentCycle == cyclePeriod
+            ? isLongBreak()
               ? 'long break'
               : 'break'
             : 'active';
@@ -143,7 +154,7 @@ function runEvent(event) {
         if (localStatus=='active') {
           chrome.action.setBadgeText({ text: 'ON' });
           nextNotify = new Date(+now + activeTime * 1000); // 1 minute timer (for now)
-        } else if (currentCycle == cyclePeriod) {
+        } else if (isLongBreak()) {
           chrome.action.setBadgeText({ text: 'Y' });
           nextNotify = new Date(+now + longBreakTime * 1000); // 39 second timer (for now)
         } else {
@@ -160,6 +171,33 @@ function runEvent(event) {
   }
 }
 
+function getDefault(setting) {
+  switch (setting) {
+    case 'cyclePeriod':
+      return 2;
+    case 'activeTime':
+      return 60;
+    case 'breakTime':
+      return 30;
+    case 'longBreakTime':
+      return 39;
+
+    default:
+      break;
+  }
+}
+
+async function settingsSetup() {
+  return chrome.storage.sync.get(SETTINGS_KEYS)
+    .then((result) => {
+      // Load, apply defaults as needed
+      cyclePeriod = result['cyclePeriod'] || getDefault('cyclePeriod');
+      activeTime = result['activeTime'] || getDefault('activeTime');
+      breakTime = result['breakTime'] || getDefault('breakTime');
+      longBreakTime = result['longBreakTime'] || getDefault('longBreakTime');
+    });
+}
+
 // Handle case where 1 click starts to load the stored status, but another click comes in
 // Global promise for "I'm loading the status into localStatus"
 // TODO: Make this load any user-settings
@@ -167,7 +205,9 @@ function runEvent(event) {
 let loading;
 async function loadStatus(){
   if (!!localStatus) {
-    // Already loaded
+    // Already loaded - Handles:
+    // - clicks during active/break
+    // - Clicks in the ~30 seconds a SW might stay awake while status is paused/asleep (no heartbeat)
     return;
   } else if (loading) {
     // Someone else loading
@@ -175,13 +215,17 @@ async function loadStatus(){
     return;
   }
 
-  // Load Pomodoro Cycle state and save history if we've rolled to a new day
-  let cycleSetup = chrome.storage.local.get(['store-pause-completed', 'last-heartbeat'])
+  // First load our synced settings
+  // Then load Pomodoro Cycle state and save history if we've rolled to a new day
+  let cycleSetup = settingsSetup().then(() => {
+  return chrome.storage.local.get(['store-pause-completed', 'last-heartbeat'])
     .then((result) => {
-      // TODO use last-heartbeat to roll over a new day
+      // TODO save history and use last-heartbeat to roll over a new day
+      // TODO handle cyclePeriod edits that make currentCycle > cyclePeriod (oops!)
       currentCycle = result['store-pause-completed'] || 0;
       return chrome.storage.local.remove(['store-pause-completed']);
     });
+  });
 
   loading = cycleSetup.then(() =>
     chrome.storage.local.get(['store-pause-leftover', 'store-pause-status'])
@@ -224,7 +268,7 @@ async function saveStatus() {
   // TODON'T: No need to store Pomodoro History here
   // Just make sure the history page can read today's count
   // Save the stuff + clear local status
-  console.log('Storing time left before "%s" is over: %s (completed %s today)', lastStatus, nextNotify - new Date(), currentCycle)
+  console.log('Storing time left before "%s" is over: %s (completed %s)', lastStatus, nextNotify - new Date(), currentCycle)
   loading = 
     chrome.storage.local.set({
       'store-pause-leftover': nextNotify - new Date(),
@@ -234,9 +278,7 @@ async function saveStatus() {
     .then(stopHeartbeat);
   await loading;
   loading = null;
-  localStatus = null;
-  lastStatus = null;
-  currentCycle = null;
+  // Keep everything else in memory in case we're paused/asleep for <30 seconds (cached!)
 }
 
 //** Operations that could be on startup */
@@ -265,6 +307,50 @@ chrome.action.onClicked.addListener(async () => {
 
 // Handle contextMenu options
 // Options: 
+
+// Load Settings from options page as they're changed
+chrome.storage.onChanged.addListener((changes, namespace) => {
+  // If this handler woke the SW, do nothing. Next *loadStatus* will get the settings
+  if (!localStatus) {
+    return;
+  }
+  // Now check if these are settings we care about
+  // Only handling synced settings
+  if (namespace!=='sync') {
+    return;
+  }
+  let changedSettings = Object.keys(changes).filter(key => SETTINGS_KEYS.includes(key));
+  if (changedSettings.length==0) {
+    return;
+  } else {
+    console.log('Loaded %s settings', changedSettings.length)
+    changedSettings.forEach(key => {
+      // Load, apply defaults as needed
+      switch (key) {
+        case 'cyclePeriod':
+          cyclePeriod = changes[key].newValue || getDefault('cyclePeriod');
+          break;
+        case 'activeTime':
+          activeTime = changes[key].newValue || getDefault('activeTime');
+          break;
+        case 'breakTime':
+          breakTime = changes[key].newValue || getDefault('breakTime');
+          break;
+        case 'longBreakTime':
+          longBreakTime = changes[key].newValue || getDefault('longBreakTime');
+          break;
+      
+        default:
+          break;
+      }
+    });
+    // clear localStatus so next `loadStatus` caller will pull new settings
+    if (['asleep','paused'].includes(localStatus)) {
+      localStatus=null;
+      return;
+    }
+  }
+});
 
 //** Operations only registered after startup */
 // https://developer.chrome.com/docs/extensions/develop/migrate/to-service-workers#keep_a_service_worker_alive_continuously
