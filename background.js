@@ -62,6 +62,84 @@ function changeBadgeStatus() {
   chrome.action.setBadgeBackgroundColor({ color });
 }
 
+function startTimer(clearNotification) {
+  // If the click (icon, notification, or splash page) woke up the SW, default to active
+  if (!lastStatus) {
+    localStatus='active'
+  } else {
+    localStatus = lastStatus == 'active'
+      ? 'break'
+      : 'active';
+    lastStatus=''; // Clean up
+  }
+
+  // Update badge + set nextNotify
+  changeBadgeStatus();
+
+  // Start the heartbeat
+  // Then optionally clear the notification
+  if (clearNotification) {
+    startHeartbeat().then(() => {
+      return chrome.notifications.clear('my-notification');
+    });
+  } else {
+    startHeartbeat();
+  }
+}
+
+function pauseTimer() {
+  chrome.action.setBadgeText({ text: '-' });
+  lastStatus=localStatus
+  localStatus='paused'
+  // Clears local status + stops heartbeat, to allow SW to go inactive
+  saveStatus();
+}
+
+function resumeTimer() {
+  console.log('Resuming to "%s" with assumed nextNotify: %o', lastStatus, nextNotify)
+  // Have to check if there is <1 heartbeat of time left
+  const diff = nextNotify - new Date();
+  localStatus=lastStatus;
+  lastStatus='';
+
+  chrome.action.setBadgeText({ text: getBadgeTextFromSeconds(diff / 1000)});
+  let color = localStatus == 'active' ? '#bb0000' : '#11aa11';
+  chrome.action.setBadgeBackgroundColor({ color });
+  if (diff<(20*1000)) {
+    lastHeartbeatOnly(diff)
+  } else {
+    startHeartbeat();
+  }
+}
+
+function completeTimer() {
+  chrome.action.setBadgeText({ text: '' });
+  lastStatus = localStatus
+  localStatus = 'asleep'
+  // Increment Pomodoro cycle
+  if (lastStatus == 'active') {
+    currentCycle++;
+  }
+  // Trigger notification
+  // If we were active, show break notification (and vice versa)
+  let notifyText = lastStatus == 'active'
+    ? isLongBreak()
+      ? 'long break'
+      : 'break'
+    : 'active';
+  chrome.notifications.create('my-notification',{
+    type: 'basic',
+    iconUrl: 'stay_hydrated.png',
+    title: 'Time to Hydrate',
+    message: 
+      "Notification type: " + notifyText,
+    buttons: [{ title: 'Keep it Flowing.' }],
+    priority: 0
+  });
+  // TODO: Open browser tab with info
+  // TODO: store today's pomodoro history
+}
+
 // The main event logic
 // States: 'asleep','paused','active','break'
 // Events: 'heartbeat-complete','notify-active-click','notify-break-click','icon-click'
@@ -71,42 +149,11 @@ function runEvent(event) {
   switch (event) {
     case 'icon-click':
       if (localStatus=='asleep') {
-        // If the icon click woke up the SW, default to active
-        if (!lastStatus) {
-          localStatus='active'
-        } else {
-          localStatus = lastStatus == 'active'
-            ? 'break'
-            : 'active';
-          lastStatus=''; // Clean up
-        }
-        // Update badge + start timer
-        changeBadgeStatus();
-
-        // clear the notification
-        // Start the heartbeat first!
-        startHeartbeat().then(() => {
-          return chrome.notifications.clear('my-notification');
-        });
+        startTimer(true);
       } else if (['active','break'].includes(localStatus)) {
-        chrome.action.setBadgeText({ text: '-' });
-        lastStatus=localStatus
-        localStatus='paused'
-        // Clears local status + stops heartbeat, to allow SW to go inactive
-        saveStatus();
+        pauseTimer();
       } else if (localStatus=='paused') {
-        console.log('Resuming to "%s" with assumed nextNotify: %o', lastStatus, nextNotify)
-        // Have to check if there is <1 heartbeat of time left
-        const diff = nextNotify - new Date();
-        localStatus=lastStatus;
-        lastStatus='';
-
-        chrome.action.setBadgeText({ text: getBadgeTextFromSeconds(diff / 1000)});
-        if (diff<(20*1000)) {
-          lastHeartbeatOnly(diff)
-        } else {
-          startHeartbeat();
-        }
+        resumeTimer();
       }
       break;
     case 'heartbeat-complete':
@@ -114,31 +161,7 @@ function runEvent(event) {
       if (['active','break'].includes(localStatus)) {
         const diff = nextNotify - new Date();
         if (diff<0) {
-          chrome.action.setBadgeText({ text: '' });
-          lastStatus = localStatus
-          localStatus = 'asleep'
-          // Increment Pomodoro cycle
-          if (lastStatus == 'active') {
-            currentCycle++;
-          }
-          // Trigger notification
-          // If we were active, show break notification (and vice versa)
-          let notifyText = lastStatus == 'active'
-            ? isLongBreak()
-              ? 'long break'
-              : 'break'
-            : 'active';
-          chrome.notifications.create('my-notification',{
-            type: 'basic',
-            iconUrl: 'stay_hydrated.png',
-            title: 'Time to Hydrate',
-            message: 
-              "Notification type: " + notifyText,
-            buttons: [{ title: 'Keep it Flowing.' }],
-            priority: 0
-          });
-          // TODO: Open browser tab with info
-          // TODO: store today's pomodoro history
+          completeTimer();
         } else if (diff<(20*1000)) {
           // Account for drift + cases where timer isn't cleanly divisible by heartbeat
           // (Example: 20 second heartbeat, 30 second timer, last run is 10 seconds - any drift)
@@ -156,15 +179,7 @@ function runEvent(event) {
       // Only respond on asleep
       // Assume the click removes the notification, nothing to clear
       if (localStatus=='asleep') {
-        localStatus = lastStatus == 'active'
-          ? 'break'
-          : 'active';
-        lastStatus=''; // Clean up
-
-        // Update badge status
-        changeBadgeStatus();
-
-        startHeartbeat();
+        startTimer(false);
       }
       break;
     default:
@@ -194,10 +209,10 @@ async function settingsSetup() {
   return chrome.storage.sync.get(SETTINGS_KEYS)
     .then((result) => {
       // Load, apply defaults as needed
-      cyclePeriod = result['cyclePeriod'] || getDefault('cyclePeriod');
-      activeTime = result['activeTime'] || getDefault('activeTime');
-      breakTime = result['breakTime'] || getDefault('breakTime');
-      longBreakTime = result['longBreakTime'] || getDefault('longBreakTime');
+      cyclePeriod = result['cyclePeriod'] ?? getDefault('cyclePeriod');
+      activeTime = result['activeTime'] ?? getDefault('activeTime');
+      breakTime = result['breakTime'] ?? getDefault('breakTime');
+      longBreakTime = result['longBreakTime'] ?? getDefault('longBreakTime');
     });
 }
 
@@ -247,7 +262,7 @@ async function loadStatus(){
         lastStatus = result['store-pause-status'];
         let now = new Date();
         nextNotify = new Date(+now + leftover)
-          return chrome.storage.local.remove(['store-pause-leftover', 'store-pause-status']);
+        return chrome.storage.local.remove(['store-pause-leftover', 'store-pause-status']);
       }
       }));
   await loading;
@@ -331,23 +346,24 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
       // Load, apply defaults as needed
       switch (key) {
         case 'cyclePeriod':
-          cyclePeriod = changes[key].newValue || getDefault('cyclePeriod');
+          cyclePeriod = changes[key].newValue ?? getDefault('cyclePeriod');
           break;
         case 'activeTime':
-          activeTime = changes[key].newValue || getDefault('activeTime');
+          activeTime = changes[key].newValue ?? getDefault('activeTime');
           break;
         case 'breakTime':
-          breakTime = changes[key].newValue || getDefault('breakTime');
+          breakTime = changes[key].newValue ?? getDefault('breakTime');
           break;
         case 'longBreakTime':
-          longBreakTime = changes[key].newValue || getDefault('longBreakTime');
+          longBreakTime = changes[key].newValue ?? getDefault('longBreakTime');
           break;
       
         default:
           break;
       }
     });
-    // clear localStatus so next `loadStatus` caller will pull new settings
+    // Clear localStatus so next `loadStatus` caller will pull new settings
+    // Otherwise we keep it populated, so things can stay cached
     if (['asleep','paused'].includes(localStatus)) {
       localStatus=null;
       return;
