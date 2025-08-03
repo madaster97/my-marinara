@@ -116,6 +116,7 @@ function completeTimer() {
   chrome.action.setBadgeText({ text: '' });
   lastStatus = localStatus
   localStatus = 'asleep'
+  let splashHash="count="+currentCycle;
   // Increment Pomodoro cycle
   if (lastStatus == 'active') {
     currentCycle++;
@@ -129,11 +130,11 @@ function completeTimer() {
     : 'active';
   // Store completion info (lastStatus, currentCycle), then notify
   saveCompletion().then(async () => {
-    // TODO: Open browser tab with info, do so before notification!
+    // Open browser tab with info, do so before notification!
     // TODO: Give the tab a button it can click to start next cycle!
     loading = chrome.tabs.create({
       active: true,
-      url:'/splash.html'
+      url:'/splash.html#'+splashHash
     }).then(tab => 
         // TODO: drawAttention? - https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/windows/update 
         chrome.windows.update(tab.windowId, { focused: true })

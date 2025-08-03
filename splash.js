@@ -1,5 +1,6 @@
 function doSomething() {
-  console.info("DOM loaded");
+    let hashParams = new URLSearchParams(window.location.hash.substring(1));
+    document.getElementById('count').innerText=hashParams.get('count')
 }
 
 if (document.readyState === "loading") {
