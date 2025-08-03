@@ -137,15 +137,15 @@ function completeTimer() {
     : 'active';
   // TODO: Use maxAction to not show the action if it isn't supported
   // Used `show`... instead of constructor: https://stackoverflow.com/questions/29774836/failed-to-construct-notification-illegal-constructor
-  self.registration.showNotification("Time to Hydrate", {
-    tag: 'my-notification',
-    icon: 'stay_hydrated.png',
-    body: "Notification type: " + notifyText,
-    actions: [{action: 'my-action', title: 'begin'}]
-  }).then(() => {
-    // Forgetting to save broke cycling on re-activation, defaulted to active
-    return saveStatus();
-  })
+  // But first save off status, so re-activating can handle it
+  saveStatus().then(() => {
+   self.registration.showNotification("Time to Hydrate", {
+     tag: 'my-notification',
+     icon: 'stay_hydrated.png',
+     body: "Notification type: " + notifyText,
+     actions: [{action: 'my-action', title: 'begin'}]
+   })
+  });
   // TODO: Open browser tab with info
   // TODO: store today's pomodoro history
 }
