@@ -128,18 +128,30 @@ function completeTimer() {
       : 'break'
     : 'active';
   // Store completion info (lastStatus, currentCycle), then notify
-  saveCompletion().then(() => {
-    chrome.notifications.create('my-notification',{
-      type: 'basic',
-      iconUrl: 'stay_hydrated.png',
-      title: 'Time to Hydrate',
-      message: 
-        "Notification type: " + notifyText,
-      buttons: [{ title: 'Keep it Flowing.' }],
-      priority: 0
-    });
+  saveCompletion().then(async () => {
+    // TODO: Open browser tab with info, do so before notification!
+    // TODO: Give the tab a button it can click to start next cycle!
+    loading = chrome.tabs.create({
+      active: true,
+      url:'/splash.html'
+    }).then(tab => 
+        // TODO: drawAttention? - https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/windows/update 
+        chrome.windows.update(tab.windowId, { focused: true })
+      )
+      .then(() => {
+        return chrome.notifications.create('my-notification',{
+          type: 'basic',
+          iconUrl: 'stay_hydrated.png',
+          title: 'Time to Hydrate',
+          message: 
+            "Notification type: " + notifyText,
+          buttons: [{ title: 'Keep it Flowing.' }],
+          priority: 0
+        });
+      })
+      await loading;
+      loading = null;
   });
-  // TODO: Open browser tab with info
   // TODO: store today's pomodoro history
 }
 
@@ -429,7 +441,7 @@ async function lastHeartbeatOnly(timeLeft) {
 }
 
 // Called when you pause
-async function stopHeartbeat() {
+function stopHeartbeat() {
   if (lastHeartbeatTimeout) {
     clearTimeout(lastHeartbeatTimeout);
     console.log('Final heartbeat stopped')
