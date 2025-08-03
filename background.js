@@ -142,10 +142,12 @@ function completeTimer() {
     icon: 'stay_hydrated.png',
     body: "Notification type: " + notifyText,
     actions: [{action: 'my-action', title: 'begin'}]
+  }).then(() => {
+    // Forgetting to save broke cycling on re-activation, defaulted to active
+    return saveStatus();
   })
   // TODO: Open browser tab with info
   // TODO: store today's pomodoro history
-  // TODO: Why do we not `saveStatus` here?
 }
 
 // The main event logic
