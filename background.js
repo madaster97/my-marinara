@@ -179,6 +179,7 @@ function runEvent(event) {
         } else {
           // Otherwise, heartbeat will continue!
           // Update badge with # of minutes
+          // TODO: Account for drift, shorten heartbeat to better hit next minute mark
           chrome.action.setBadgeText({ text: getBadgeTextFromSeconds(diff / 1000)});
         }
       } else {
@@ -249,26 +250,27 @@ async function loadStatus(){
   // First load our synced settings
   // Then load Pomodoro Cycle state and save history if we've rolled to a new day
   let cycleSetup = settingsSetup().then(() => {
-  return chrome.storage.local.get(['store-pause-completed', 'last-heartbeat'])
+  return chrome.storage.local.get(['store-completed', 'last-heartbeat'])
     .then((result) => {
       // TODO save history and use last-heartbeat to roll over a new day
       // TODO handle cyclePeriod edits that make currentCycle > cyclePeriod (oops!)
-      currentCycle = result['store-pause-completed'] || 0;
-      return chrome.storage.local.remove(['store-pause-completed']);
+      currentCycle = result['store-completed'] || 0;
+      return chrome.storage.local.remove(['store-completed']);
     });
   });
 
   loading = cycleSetup.then(() =>
-    chrome.storage.local.get(['store-pause-leftover', 'store-pause-status'])
+    chrome.storage.local.get(['store-pause-leftover', 'store-pause-status','store-asleep-last-status'])
     .then(result => {
       console.log('Result received: %o', result)
       const leftover = result['store-pause-leftover'];
       if (!leftover) {
         // We're asleep, resumed without a stored pause
-        console.log('Resuming as if asleep')
+        console.log('Resuming as if asleep, with lastStatus: %s',result['store-asleep-last-status'])
         localStatus = 'asleep'
-        // Don't set lastStatus, that defaulting should only run for icon-click event
-        return; // Nothing stored, nothing to remove!
+        // Setting lastStatus to handle resume from inactivity
+        lastStatus=result['store-asleep-last-status']
+        return chrome.storage.local.remove(['store-asleep-last-status']);
       } else {
         console.log('Resuming as if paused')
         localStatus = 'paused'
@@ -280,6 +282,28 @@ async function loadStatus(){
       }));
   await loading;
   loading = null;
+}
+
+// Only store completion info (lastStatus, currentCycle already incremented), then stop heartbeat
+async function saveCompletion() {
+  // If you change cyclePeriod during a 'break',
+  // status check here prevents cycle reset after that break (could be weird...)
+  if (lastStatus=='active' && isLongBreak()) {
+    // Reset `currentCylce`, store rest to Pomodoro History
+    // TODO: Actually store off... Need to promise chain
+    console.log('Storing cycles: %s', currentCycle);
+    currentCycle=0;
+  }
+  loading = 
+    chrome.storage.local.set({
+      'store-asleep-last-status': lastStatus,
+      'store-completed': currentCycle
+    })
+    .then(stopHeartbeat);
+  await loading;
+  loading = null;
+  // TODO: for above History, maybe register a promise here but don't await it?
+  // TODO: When to store History for users without long breaks configured?
 }
 
 // Clears local status, stops heartbeat, store cycle, to allow SW to go inactive
@@ -296,15 +320,13 @@ async function saveStatus() {
     await loading;
     return;
   }
-  // TODON'T: No need to store Pomodoro History here
-  // Just make sure the history page can read today's count
   // Save the stuff + clear local status
   console.log('Storing time left before "%s" is over: %s (completed %s)', lastStatus, nextNotify - new Date(), currentCycle)
   loading = 
     chrome.storage.local.set({
       'store-pause-leftover': nextNotify - new Date(),
       'store-pause-status': lastStatus,
-      'store-pause-completed': currentCycle
+      'store-completed': currentCycle
     })
     .then(stopHeartbeat);
   await loading;
