@@ -5,7 +5,8 @@
   "manifest_version": 3,
   "permissions": ["alarms", "notifications", "storage"],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "scripts": ["background.js"]
   },
   "action": {
     "default_title": "Drink Water Event"
@@ -15,5 +16,11 @@
     "32": "drink_water32.png",
     "48": "drink_water48.png",
     "128": "drink_water128.png"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "addon69@example.com",
+      "strict_min_version": "58.0"
+    }
   }
 }

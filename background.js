@@ -80,7 +80,15 @@ function startTimer(clearNotification) {
   // Then optionally clear the notification
   if (clearNotification) {
     startHeartbeat().then(() => {
-      return chrome.notifications.clear('my-notification');
+      return self.registration.getNotifications({tag:'my-notification'})
+      .then(notifications => {
+        // Should only be one with requested tag
+        if (notifications.length ==0) {
+          console.warn('Tried to close a notifiation that was not there')
+        } else {
+          notifications[0].close();
+        }
+      })
     });
   } else {
     startHeartbeat();
@@ -127,17 +135,17 @@ function completeTimer() {
       ? 'long break'
       : 'break'
     : 'active';
-  chrome.notifications.create('my-notification',{
-    type: 'basic',
-    iconUrl: 'stay_hydrated.png',
-    title: 'Time to Hydrate',
-    message: 
-      "Notification type: " + notifyText,
-    buttons: [{ title: 'Keep it Flowing.' }],
-    priority: 0
-  });
+  // TODO: Use maxAction to not show the action if it isn't supported
+  // Used `show`... instead of constructor: https://stackoverflow.com/questions/29774836/failed-to-construct-notification-illegal-constructor
+  self.registration.showNotification("Time to Hydrate", {
+    tag: 'my-notification',
+    icon: 'stay_hydrated.png',
+    body: "Notification type: " + notifyText,
+    actions: [{action: 'my-action', title: 'begin'}]
+  })
   // TODO: Open browser tab with info
   // TODO: store today's pomodoro history
+  // TODO: Why do we not `saveStatus` here?
 }
 
 // The main event logic
@@ -188,7 +196,10 @@ function runEvent(event) {
   }
 }
 
-// Settings for debugging: `await chrome.storage.sync.set({'cyclePeriod': 2, 'activeTime': 60, 'breakTime': 30, 'longBreakTime': 39})`
+// Settings for debugging (short timers):
+// `await chrome.storage.sync.set({'cyclePeriod': 2, 'activeTime': 60, 'breakTime': 30, 'longBreakTime': 39})`
+// To restore defaults:
+// `await chrome.storage.sync.remove(SETTINGS_KEYS)`
 function getDefault(setting) {
   switch (setting) {
     case 'cyclePeriod':
@@ -301,20 +312,22 @@ async function saveStatus() {
 
 //** Operations that could be on startup */
 
-// Handle someone clicking the button in a notification
-// Check stored status because this could be on startup
-chrome.notifications.onButtonClicked.addListener(async (notificationId) => {
-  console.log('Notification button clicked: %s', notificationId)
-  await loadStatus();
-  switch (notificationId) {
-    case 'my-notification':
+// Handle notificationClick in SW event handler (self == SW)
+// Call `loadStatus`, since this event can wake up the extension (with no other events called)
+self.addEventListener('notificationclick',
+  async (event) => {
+    // This should do it!
+    await loadStatus();
+    // event.notification.close(); - TODO: Do I want to close it?
+    if (event.action === "my-action") {
+      // User chose to resume
       runEvent('notify-click')
-      break;
-    default:
-      console.warn('Unknown notification sent: %s', notificationId)
-      break;
-  }
-});
+    } else {
+      // User just clicked the notification
+      console.log("And here is where I'd put the tab in focus, IF I HAD ONE")
+    }
+  },
+false);
 
 // Handle someone clicking the app icon
 // Check stored status because this could be on startup
