@@ -62,7 +62,7 @@ function changeBadgeStatus() {
   chrome.action.setBadgeBackgroundColor({ color });
 }
 
-function startTimer(clearNotification) {
+function startTimerSetStatus() {
   // If the click (icon, notification, or splash page) woke up the SW, default to active
   if (!lastStatus) {
     localStatus='active'
@@ -72,19 +72,48 @@ function startTimer(clearNotification) {
       : 'active';
     lastStatus=''; // Clean up
   }
+}
+
+async function closeTab() {
+  let tabs = await chrome.runtime.getContexts({contextTypes:["TAB"]});
+  switch (tabs.length) {
+    case 0:
+      break;
+    case 1:
+      await chrome.tabs.remove(tabs[0].tabId);
+      break;
+    
+    default:
+      console.warn('Had greater than 1 tab open (%s)', tabs.length);
+      break;
+  }
+}
+
+// From the icon click and splash page click, clear Tab + Notification
+function startTimer() {
+  startTimerSetStatus();
 
   // Update badge + set nextNotify
   changeBadgeStatus();
 
   // Start the heartbeat
-  // Then optionally clear the notification
-  if (clearNotification) {
-    startHeartbeat().then(() => {
-      return chrome.notifications.clear('my-notification');
-    });
-  } else {
-    startHeartbeat();
-  }
+  // Then close the Tab
+  // Then clear the notification
+  startHeartbeat().then(closeTab).then(() => {
+    return chrome.notifications.clear('my-notification');
+  });
+}
+
+// From notify click, don't try to clear Notification
+function startTimerFromNotify() {
+  startTimerSetStatus();
+
+  // Update badge + set nextNotify
+  changeBadgeStatus();
+
+  // Start the heartbeat
+  // Then close the Tab
+  startHeartbeat().then(closeTab);
 }
 
 function pauseTimer() {
@@ -116,11 +145,12 @@ function completeTimer() {
   chrome.action.setBadgeText({ text: '' });
   lastStatus = localStatus
   localStatus = 'asleep'
-  let splashHash="count="+currentCycle;
   // Increment Pomodoro cycle
   if (lastStatus == 'active') {
     currentCycle++;
   }
+  // TODO: Load today's here, OR require page to load it? Need some History first
+  let splashHash=`count=${currentCycle}&lastStatus=${lastStatus}`
   // Trigger notification
   // If we were active, show break notification (and vice versa)
   let notifyText = lastStatus == 'active'
@@ -165,7 +195,7 @@ function runEvent(event) {
   switch (event) {
     case 'icon-click':
       if (localStatus=='asleep') {
-        startTimer(true);
+        startTimer();
       } else if (['active','break'].includes(localStatus)) {
         pauseTimer();
       } else if (localStatus=='paused') {
@@ -196,7 +226,7 @@ function runEvent(event) {
       // Only respond on asleep
       // Assume the click removes the notification, nothing to clear
       if (localStatus=='asleep') {
-        startTimer(false);
+        startTimerFromNotify();
       }
       break;
     default:
@@ -342,6 +372,7 @@ async function saveStatus() {
 
 // Handle someone clicking the button in a notification
 // Check stored status because this could be on startup
+// TODO: Add onClicked handler too? Parity for clicking to also start timer
 chrome.notifications.onButtonClicked.addListener(async (notificationId) => {
   console.log('Notification button clicked: %s', notificationId)
   await loadStatus();
@@ -360,6 +391,17 @@ chrome.notifications.onButtonClicked.addListener(async (notificationId) => {
 chrome.action.onClicked.addListener(async () => {
   await loadStatus();
   runEvent('icon-click')
+});
+
+// Handle someone clicking the button in the splash page tab
+// Check stored status because this could be on startup
+chrome.runtime.onMessage.addListener(async (message,sender) => {
+  if (!sender.tab && !sender.tab.id) {
+    console.warn('Received a runtime message that was NOT from a browser tab');
+    return;
+  }
+  await loadStatus();
+  runEvent('icon-click'); // Makes sense for these to be equivalent
 });
 
 // Handle contextMenu options
