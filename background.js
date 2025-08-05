@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 'use strict';
+if (typeof browser === "undefined") {
+    var browser = chrome;
+}
 
 // In-Memory Status: 'asleep','paused','active','break'
 // 'asleep' will cover 2 things:
@@ -48,18 +51,18 @@ function changeBadgeStatus() {
   // Add specific colors, change text to # of minutes
   let now = new Date();
   if (localStatus=='active') {
-    chrome.action.setBadgeText({ text: getBadgeTextFromSeconds(activeTime) });
+    browser.action.setBadgeText({ text: getBadgeTextFromSeconds(activeTime) });
     nextNotify = new Date(+now + activeTime * 1000);
   } else if (isLongBreak()) {
-    chrome.action.setBadgeText({ text: getBadgeTextFromSeconds(longBreakTime) });
+    browser.action.setBadgeText({ text: getBadgeTextFromSeconds(longBreakTime) });
     nextNotify = new Date(+now + longBreakTime * 1000);
   } else {
-    chrome.action.setBadgeText({ text: getBadgeTextFromSeconds(breakTime) });
+    browser.action.setBadgeText({ text: getBadgeTextFromSeconds(breakTime) });
     nextNotify = new Date(+now + breakTime * 1000);
   }
 
   let color = localStatus == 'active' ? '#bb0000' : '#11aa11';
-  chrome.action.setBadgeBackgroundColor({ color });
+  browser.action.setBadgeBackgroundColor({ color });
 }
 
 function startTimerSetStatus() {
@@ -75,12 +78,13 @@ function startTimerSetStatus() {
 }
 
 async function closeTab() {
-  let tabs = await chrome.runtime.getContexts({contextTypes:["TAB"]});
+  let tabs = await browser.runtime.getContexts({contextTypes:["TAB"]});
+  tabs.forEach(tab => console.log('Tab found: %o', tab))
   switch (tabs.length) {
     case 0:
       break;
     case 1:
-      await chrome.tabs.remove(tabs[0].tabId);
+      await browser.tabs.remove(tabs[0].tabId);
       break;
     
     default:
@@ -100,7 +104,7 @@ function startTimer() {
   // Then close the Tab
   // Then clear the notification
   startHeartbeat().then(closeTab).then(() => {
-    return chrome.notifications.clear('my-notification');
+    return browser.notifications.clear('my-notification');
   });
 }
 
@@ -117,7 +121,7 @@ function startTimerFromNotify() {
 }
 
 function pauseTimer() {
-  chrome.action.setBadgeText({ text: '-' });
+  browser.action.setBadgeText({ text: '-' });
   lastStatus=localStatus
   localStatus='paused'
   // Clears local status + stops heartbeat, to allow SW to go inactive
@@ -131,9 +135,9 @@ function resumeTimer() {
   localStatus=lastStatus;
   lastStatus='';
 
-  chrome.action.setBadgeText({ text: getBadgeTextFromSeconds(diff / 1000)});
+  browser.action.setBadgeText({ text: getBadgeTextFromSeconds(diff / 1000)});
   let color = localStatus == 'active' ? '#bb0000' : '#11aa11';
-  chrome.action.setBadgeBackgroundColor({ color });
+  browser.action.setBadgeBackgroundColor({ color });
   if (diff<(20*1000)) {
     lastHeartbeatOnly(diff)
   } else {
@@ -142,7 +146,7 @@ function resumeTimer() {
 }
 
 function completeTimer() {
-  chrome.action.setBadgeText({ text: '' });
+  browser.action.setBadgeText({ text: '' });
   lastStatus = localStatus
   localStatus = 'asleep'
   // Increment Pomodoro cycle
@@ -162,23 +166,35 @@ function completeTimer() {
   saveCompletion().then(async () => {
     // Open browser tab with info, do so before notification!
     // TODO: Give the tab a button it can click to start next cycle!
-    loading = chrome.tabs.create({
+    loading = browser.tabs.create({
       active: true,
       url:'/splash.html#'+splashHash
     }).then(tab => 
         // TODO: drawAttention? - https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/windows/update 
-        chrome.windows.update(tab.windowId, { focused: true })
+        browser.windows.update(tab.windowId, { focused: true })
       )
       .then(() => {
-        return chrome.notifications.create('my-notification',{
-          type: 'basic',
-          iconUrl: 'stay_hydrated.png',
-          title: 'Time to Hydrate',
-          message: 
-            "Notification type: " + notifyText,
-          buttons: [{ title: 'Keep it Flowing.' }],
-          priority: 0
-        });
+        try {
+          return browser.notifications.create('my-notification',{
+            type: 'basic',
+            iconUrl: 'stay_hydrated.png',
+            title: 'Time to Hydrate',
+            message: 
+              "Notification type: " + notifyText,
+            buttons: [{ title: 'Keep it Flowing.' }],
+            priority: 0
+          });
+        } catch (error) {
+          // No buttons option, to work in Firefox
+          return browser.notifications.create('my-notification',{
+            type: 'basic',
+            iconUrl: 'stay_hydrated.png',
+            title: 'Time to Hydrate',
+            message: 
+              "Notification type: " + notifyText,
+            priority: 0
+          });
+        }
       })
       await loading;
       loading = null;
@@ -216,7 +232,7 @@ function runEvent(event) {
           // Otherwise, heartbeat will continue!
           // Update badge with # of minutes
           // TODO: Account for drift, shorten heartbeat to better hit next minute mark
-          chrome.action.setBadgeText({ text: getBadgeTextFromSeconds(diff / 1000)});
+          browser.action.setBadgeText({ text: getBadgeTextFromSeconds(diff / 1000)});
         }
       } else {
         console.warn('Heartbeat fired while in "%s" status', localStatus)
@@ -236,7 +252,7 @@ function runEvent(event) {
 }
 
 // Settings for debugging:
-// `await chrome.storage.sync.set({'cyclePeriod': 2, 'activeTime': 60, 'breakTime': 30, 'longBreakTime': 39})`
+// `await browser.storage.sync.set({'cyclePeriod': 2, 'activeTime': 60, 'breakTime': 30, 'longBreakTime': 39})`
 function getDefault(setting) {
   switch (setting) {
     case 'cyclePeriod':
@@ -254,7 +270,7 @@ function getDefault(setting) {
 }
 
 async function settingsSetup() {
-  return chrome.storage.sync.get(SETTINGS_KEYS)
+  return browser.storage.sync.get(SETTINGS_KEYS)
     .then((result) => {
       // Load, apply defaults as needed
       cyclePeriod = result['cyclePeriod'] ?? getDefault('cyclePeriod');
@@ -284,17 +300,17 @@ async function loadStatus(){
   // First load our synced settings
   // Then load Pomodoro Cycle state and save history if we've rolled to a new day
   let cycleSetup = settingsSetup().then(() => {
-  return chrome.storage.local.get(['store-completed', 'last-heartbeat'])
+  return browser.storage.local.get(['store-completed', 'last-heartbeat'])
     .then((result) => {
       // TODO save history and use last-heartbeat to roll over a new day
       // TODO handle cyclePeriod edits that make currentCycle > cyclePeriod (oops!)
       currentCycle = result['store-completed'] || 0;
-      return chrome.storage.local.remove(['store-completed']);
+      return browser.storage.local.remove(['store-completed']);
     });
   });
 
   loading = cycleSetup.then(() =>
-    chrome.storage.local.get(['store-pause-leftover', 'store-pause-status','store-asleep-last-status'])
+    browser.storage.local.get(['store-pause-leftover', 'store-pause-status','store-asleep-last-status'])
     .then(result => {
       console.log('Result received: %o', result)
       const leftover = result['store-pause-leftover'];
@@ -304,14 +320,14 @@ async function loadStatus(){
         localStatus = 'asleep'
         // Setting lastStatus to handle resume from inactivity
         lastStatus=result['store-asleep-last-status']
-        return chrome.storage.local.remove(['store-asleep-last-status']);
+        return browser.storage.local.remove(['store-asleep-last-status']);
       } else {
         console.log('Resuming as if paused')
         localStatus = 'paused'
         lastStatus = result['store-pause-status'];
         let now = new Date();
         nextNotify = new Date(+now + leftover)
-        return chrome.storage.local.remove(['store-pause-leftover', 'store-pause-status']);
+        return browser.storage.local.remove(['store-pause-leftover', 'store-pause-status']);
       }
       }));
   await loading;
@@ -329,7 +345,7 @@ async function saveCompletion() {
     currentCycle=0;
   }
   loading = 
-    chrome.storage.local.set({
+    browser.storage.local.set({
       'store-asleep-last-status': lastStatus,
       'store-completed': currentCycle
     })
@@ -357,7 +373,7 @@ async function saveStatus() {
   // Save the stuff + clear local status
   console.log('Storing time left before "%s" is over: %s (completed %s)', lastStatus, nextNotify - new Date(), currentCycle)
   loading = 
-    chrome.storage.local.set({
+    browser.storage.local.set({
       'store-pause-leftover': nextNotify - new Date(),
       'store-pause-status': lastStatus,
       'store-completed': currentCycle
@@ -372,8 +388,7 @@ async function saveStatus() {
 
 // Handle someone clicking the button in a notification
 // Check stored status because this could be on startup
-// TODO: Add onClicked handler too? Parity for clicking to also start timer
-chrome.notifications.onButtonClicked.addListener(async (notificationId) => {
+async function handleNotifyClick(notificationId) {
   console.log('Notification button clicked: %s', notificationId)
   await loadStatus();
   switch (notificationId) {
@@ -384,18 +399,20 @@ chrome.notifications.onButtonClicked.addListener(async (notificationId) => {
       console.warn('Unknown notification sent: %s', notificationId)
       break;
   }
-});
+}
+browser.notifications.onClicked.addListener(handleNotifyClick);
+browser.notifications.onButtonClicked.addListener(handleNotifyClick);
 
 // Handle someone clicking the app icon
 // Check stored status because this could be on startup
-chrome.action.onClicked.addListener(async () => {
+browser.action.onClicked.addListener(async () => {
   await loadStatus();
   runEvent('icon-click')
 });
 
 // Handle someone clicking the button in the splash page tab
 // Check stored status because this could be on startup
-chrome.runtime.onMessage.addListener(async (message,sender) => {
+browser.runtime.onMessage.addListener(async (message,sender) => {
   if (!sender.tab && !sender.tab.id) {
     console.warn('Received a runtime message that was NOT from a browser tab');
     return;
@@ -408,7 +425,7 @@ chrome.runtime.onMessage.addListener(async (message,sender) => {
 // Options: 
 
 // Load Settings from options page as they're changed
-chrome.storage.onChanged.addListener((changes, namespace) => {
+browser.storage.onChanged.addListener((changes, namespace) => {
   // If this handler woke the SW, do nothing. Next *loadStatus* will get the settings
   if (!localStatus) {
     return;
@@ -453,9 +470,9 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
 });
 
 //** Operations only registered after startup */
-// https://developer.chrome.com/docs/extensions/develop/migrate/to-service-workers#keep_a_service_worker_alive_continuously
+// https://developer.browser.com/docs/extensions/develop/migrate/to-service-workers#keep_a_service_worker_alive_continuously
 async function runHeartbeat() {
-  await chrome.storage.local.set({ 'last-heartbeat': new Date().getTime() });
+  await browser.storage.local.set({ 'last-heartbeat': new Date().getTime() });
   console.log('Heartbeat ran')
   // This requirement was painful to find... 
   // Completing a timeout doesn't clear this reference, need to clear yourself

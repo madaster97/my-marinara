@@ -1,3 +1,7 @@
+if (typeof browser === "undefined") {
+    var browser = chrome;
+}
+
 function doSomething() {
     let hashParams = new URLSearchParams(window.location.hash.substring(1));
     document.getElementById('count').innerText=hashParams.get('count')
@@ -5,7 +9,7 @@ function doSomething() {
 }
 
 function daButton() {
-  chrome.runtime.sendMessage({'message':'clicked'});
+  browser.runtime.sendMessage({'message':'clicked'});
 }
 
 function addButton() {
