@@ -39,6 +39,7 @@ function isLongBreak() {
 }
 
 function getBadgeTextFromSeconds(seconds) {
+  // TODO: Template in text, strip from the right to some value (4 it seems)
   if (seconds <= 60) {
     return "<1"
   } else {
@@ -417,6 +418,7 @@ browser.runtime.onMessage.addListener(async (message,sender) => {
     console.warn('Received a runtime message that was NOT from a browser tab');
     return;
   }
+  // console.log('Sender tab: %o', sender.tab);
   await loadStatus();
   runEvent('icon-click'); // Makes sense for these to be equivalent
 });
